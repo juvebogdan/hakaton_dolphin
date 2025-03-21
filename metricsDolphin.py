@@ -161,9 +161,7 @@ def slidingWindowV(P, inner=3, outer=64, maxM=MAX_FREQUENCY, norm=True):
     for i in range(n):
         Q[:,i] = Q[:,i] - (np.convolve(Q[:,i],wOuter,'same') - np.convolve(Q[:,i],wInner,'same'))/(outer - inner)
 
-    Q[Q < 0] = 0.
-
-    return Q[:maxM,:]
+    return Q
 
 def slidingWindowH(P, inner=3, outer=32, maxM=MAX_FREQUENCY, norm=True):
     """ Enhance the constrast horizontally (along temporal dimension)
