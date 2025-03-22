@@ -39,7 +39,7 @@ class AudioData:
             filepath: Path to WAV file
             
         Returns:
-            numpy array containing audio data
+            numpy array containing audio data as int16
         """
         with wave.open(filepath, 'rb') as wav:
             self.sample_rate = wav.getframerate()
@@ -47,6 +47,19 @@ class AudioData:
             audio_bytes = wav.readframes(frames)
             return np.frombuffer(audio_bytes, dtype=np.int16)
             
+    def read_wav_float(self, filepath):
+        """Read WAV file and return normalized floating-point signal
+        
+        Args:
+            filepath: Path to WAV file
+            
+        Returns:
+            numpy array containing normalized floating-point audio data in range [-1, 1]
+        """
+        audio_int16 = self.read_wav(filepath)
+        # Normalize to float32 in range [-1, 1]
+        return audio_int16.astype(np.float32) / 32768.0
+
     def get_spectrogram(self, audio, params=None):
         """Compute spectrogram with parameters suited for dolphin whistles
         
@@ -107,4 +120,34 @@ class AudioData:
             
         filepath = os.path.join(self.audio_dir, self.noise[index])
         signal = self.read_wav(filepath)
-        return self.get_spectrogram(signal, params) 
+        return self.get_spectrogram(signal, params)
+
+    def get_whistle_raw(self, index):
+        """Get raw audio data for a whistle sample by index
+        
+        Args:
+            index: Index of file to read
+            
+        Returns:
+            numpy array containing normalized floating-point audio data
+        """
+        if self.audio_dir is None:
+            raise ValueError("Audio directory not set")
+            
+        filepath = os.path.join(self.audio_dir, self.whistles[index])
+        return self.read_wav_float(filepath)
+        
+    def get_noise_raw(self, index):
+        """Get raw audio data for a noise sample by index
+        
+        Args:
+            index: Index of file to read
+            
+        Returns:
+            numpy array containing normalized floating-point audio data
+        """
+        if self.audio_dir is None:
+            raise ValueError("Audio directory not set")
+            
+        filepath = os.path.join(self.audio_dir, self.noise[index])
+        return self.read_wav_float(filepath) 

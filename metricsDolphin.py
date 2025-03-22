@@ -101,37 +101,6 @@ def matchTemplate(P, template):
     minVal, maxVal, minLoc, maxLoc = cv2.minMaxLoc(mf)
     return maxVal, maxLoc[0], maxLoc[1]
 
-def slidingWindow(P, inX=3, outX=32, inY=3, outY=64, maxM=MAX_FREQUENCY, norm=True):
-    """ Enhance the constrast
-
-        Cut off extreme values and demean the image
-        Utilize scipy convolve2d to get the mean at a given pixel
-        Remove local mean with inner exclusion region
-
-        Args:
-            P: 2-d numpy array image
-            inX: inner exclusion region in the x-dimension
-            outX: length of the window in the x-dimension
-            inY: inner exclusion region in the y-dimension
-            outY: length of the window in the y-dimension
-            maxM: size of the output image in the y-dimension
-            norm: boolean to cut off extreme values
-
-        Returns:
-            Q: 2-d numpy contrast enhanced
-    """
-    Q = P.copy()
-    m, n = Q.shape
-    if norm:
-        mval, sval = np.mean(Q[:maxM,:]), np.std(Q[:maxM,:])
-        fact_ = 1.5
-        Q[Q > mval + fact_*sval] = mval + fact_*sval
-        Q[Q < mval - fact_*sval] = mval - fact_*sval
-    wInner = np.ones((inY,inX))
-    wOuter = np.ones((outY,outX))
-    Q = Q - (convolve2d(Q,wOuter,'same') - convolve2d(Q,wInner,'same'))/(wOuter.size - wInner.size)
-    return Q[:maxM,:]
-
 def slidingWindowV(P, inner=3, outer=64, maxM=MAX_FREQUENCY, norm=True):
     """ Enhance the constrast vertically (along frequency dimension)
 

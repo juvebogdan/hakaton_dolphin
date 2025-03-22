@@ -15,9 +15,15 @@ import argparse
 from multiprocessing import Pool, cpu_count
 from functools import partial
 from tqdm import tqdm
+import librosa
+from scipy.stats import skew
 from dolphin_detector.metricsDolphin import computeMetrics, highFreqTemplate, slidingWindowV
 from dolphin_detector.fileio import AudioData  # Import AudioData from fileio
 from dolphin_detector.config import MAX_FREQUENCY  # Import from config module
+import warnings
+
+# Suppress librosa warnings
+warnings.filterwarnings('ignore', module='librosa')
 
 class TemplateManager:
     """Template Manager for dolphin whistle detection
@@ -131,10 +137,106 @@ def process_file(args):
         # Get spectrogram based on file type
         if is_whistle:
             P, freqs, bins = audio_data.get_whistle_sample(file_index)
+            audio_data_raw = audio_data.get_whistle_raw(file_index)
+            sr = audio_data.sample_rate
         else:
             P, freqs, bins = audio_data.get_noise_sample(file_index)
+            audio_data_raw = audio_data.get_noise_raw(file_index)
+            sr = audio_data.sample_rate
         
-        # Compute metrics
+        # Initialize features dictionary
+        features = {}
+        
+        # Check if audio is empty or silent
+        if len(audio_data_raw) == 0 or np.all(np.abs(audio_data_raw) < 1e-6):
+            # For silent/empty audio, set reasonable default values
+            features['zero_crossing_rate'] = 0.0
+            features['spectral_centroid'] = 0.0
+            features['spectral_centroid_std'] = 0.0
+            features['spectral_centroid_skew'] = 0.0
+            features['spectral_bandwidth'] = 0.0
+            features['spectral_bandwidth_std'] = 0.0
+            features['spectral_bandwidth_skew'] = 0.0
+            features['spectral_rolloff'] = 0.0
+            features['spectral_rolloff_std'] = 0.0
+            features['spectral_rolloff_skew'] = 0.0
+            features['spectral_contrast'] = 0.0
+            features['spectral_contrast_std'] = 0.0
+            features['spectral_contrast_skew'] = 0.0
+            features['chroma_mean'] = 0.0
+            features['chroma_std'] = 0.0
+            features['energy'] = 0.0
+            
+            # Set MFCC features to 0
+            for i in range(1, 21):
+                features[f'mfcc_{i}_mean'] = 0.0
+                features[f'mfcc_{i}_std'] = 0.0
+                features[f'mfcc_{i}_skew'] = 0.0
+                features[f'mfcc_{i}_max'] = 0.0
+                features[f'mfcc_{i}_min'] = 0.0
+        else:
+            # Zero crossing rate
+            zero_crossings = np.sum(np.abs(np.diff(np.sign(audio_data_raw))) > 0)
+            features['zero_crossing_rate'] = zero_crossings / len(audio_data_raw)
+
+            # Spectral features
+            stft = np.abs(librosa.stft(audio_data_raw))
+            
+            if np.any(stft):  # Check if STFT has any non-zero values
+                # Spectral centroid
+                centroid = librosa.feature.spectral_centroid(S=stft, sr=sr)[0]
+                features['spectral_centroid'] = np.mean(centroid) if len(centroid) > 0 else 0.0
+                features['spectral_centroid_std'] = np.std(centroid) if len(centroid) > 0 else 0.0
+                features['spectral_centroid_skew'] = skew(centroid) if len(centroid) > 0 else 0.0
+
+                # Spectral bandwidth
+                bandwidth = librosa.feature.spectral_bandwidth(S=stft, sr=sr)[0]
+                features['spectral_bandwidth'] = np.mean(bandwidth) if len(bandwidth) > 0 else 0.0
+                features['spectral_bandwidth_std'] = np.std(bandwidth) if len(bandwidth) > 0 else 0.0
+                features['spectral_bandwidth_skew'] = skew(bandwidth) if len(bandwidth) > 0 else 0.0
+
+                # Spectral rolloff
+                rolloff = librosa.feature.spectral_rolloff(S=stft, sr=sr)[0]
+                features['spectral_rolloff'] = np.mean(rolloff) if len(rolloff) > 0 else 0.0
+                features['spectral_rolloff_std'] = np.std(rolloff) if len(rolloff) > 0 else 0.0
+                features['spectral_rolloff_skew'] = skew(rolloff) if len(rolloff) > 0 else 0.0
+
+                # Spectral contrast
+                contrast = librosa.feature.spectral_contrast(S=stft, sr=sr)[0]
+                features['spectral_contrast'] = np.mean(contrast) if len(contrast) > 0 else 0.0
+                features['spectral_contrast_std'] = np.std(contrast) if len(contrast) > 0 else 0.0
+                features['spectral_contrast_skew'] = skew(contrast) if len(contrast) > 0 else 0.0
+
+                # MFCCs
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    mfccs = librosa.feature.mfcc(y=audio_data_raw, sr=sr, n_mfcc=20)
+                for i, mfcc in enumerate(mfccs):
+                    features[f'mfcc_{i+1}_mean'] = np.mean(mfcc)
+                    features[f'mfcc_{i+1}_std'] = np.std(mfcc)
+                    features[f'mfcc_{i+1}_skew'] = skew(mfcc)
+                    features[f'mfcc_{i+1}_max'] = np.max(mfcc)
+                    features[f'mfcc_{i+1}_min'] = np.min(mfcc)
+
+                # Chroma
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    try:
+                        chroma = librosa.feature.chroma_stft(S=stft, sr=sr)
+                        if np.any(chroma):  # Check if chroma features contain any non-zero values
+                            features['chroma_mean'] = np.mean(chroma)
+                            features['chroma_std'] = np.std(chroma)
+                        else:
+                            features['chroma_mean'] = 0.0
+                            features['chroma_std'] = 0.0
+                    except:
+                        features['chroma_mean'] = 0.0
+                        features['chroma_std'] = 0.0
+
+            # Energy
+            features['energy'] = np.sum(audio_data_raw**2) / len(audio_data_raw)
+        
+        # Compute original metrics
         out = computeMetrics(P, templates, bins, MAX_FREQUENCY)
         
         # Add high frequency template metrics
@@ -142,6 +244,9 @@ def process_file(args):
         out += highFreqTemplate(P, bar_)
         out += highFreqTemplate(P, bar1_)
         out += highFreqTemplate(P, bar2_)
+        
+        # Add new features to output
+        out += list(features.values())
         
         # Return metrics with label and index
         return [1 if is_whistle else 0, file_index] + out
@@ -197,6 +302,34 @@ def main():
     # Create header
     from dolphin_detector.metricsDolphin import buildHeader
     out_hdr = buildHeader(tmpl, MAX_FREQUENCY)
+    
+    # Add new feature headers
+    additional_headers = [
+        'zero_crossing_rate',
+        'spectral_centroid', 'spectral_centroid_std', 'spectral_centroid_skew',
+        'spectral_bandwidth', 'spectral_bandwidth_std', 'spectral_bandwidth_skew',
+        'spectral_rolloff', 'spectral_rolloff_std', 'spectral_rolloff_skew',
+        'spectral_contrast', 'spectral_contrast_std', 'spectral_contrast_skew'
+    ]
+    
+    # Add MFCC headers
+    for i in range(1, 21):  # 20 MFCCs
+        additional_headers.extend([
+            f'mfcc_{i}_mean',
+            f'mfcc_{i}_std',
+            f'mfcc_{i}_skew',
+            f'mfcc_{i}_max',
+            f'mfcc_{i}_min'
+        ])
+    
+    # Add chroma and energy headers
+    additional_headers.extend([
+        'chroma_mean',
+        'chroma_std',
+        'energy'
+    ])
+    
+    out_hdr = out_hdr + ',' + ','.join(additional_headers)
     
     # Determine number of files to process based on test mode
     test_mode = args.test

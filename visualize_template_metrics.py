@@ -5,8 +5,10 @@ import pandas as pd
 import wave
 import cv2
 from scipy import signal
+from scipy.ndimage import gaussian_filter
 import sys
 from pathlib import Path
+import argparse
 
 # Add the parent directory to sys.path to allow both package and script usage
 parent_dir = str(Path(__file__).resolve().parent.parent)
@@ -24,7 +26,20 @@ def read_wav(filepath):
         audio_bytes = wav.readframes(frames)
         return np.frombuffer(audio_bytes, dtype=np.int16), sample_rate
 
-def get_spectrogram(audio, sample_rate, params=None):
+def apply_gaussian_filter(spectrogram, sigma=(1, 1)):
+    """Apply 2D Gaussian filter to spectrogram
+    
+    Args:
+        spectrogram: 2D numpy array of spectrogram values
+        sigma: Tuple of (sigma_freq, sigma_time) for Gaussian kernel size
+               Higher values = more smoothing
+    
+    Returns:
+        Filtered spectrogram
+    """
+    return gaussian_filter(spectrogram, sigma=sigma)
+
+def get_spectrogram(audio, sample_rate, params=None, apply_gaussian=True, gaussian_sigma=(1, 1)):
     """Compute spectrogram with parameters suited for dolphin whistles"""
     if params is None:
         params = {
@@ -40,6 +55,9 @@ def get_spectrogram(audio, sample_rate, params=None):
                                          scaling='density')
     
     Sxx = 10 * np.log10(Sxx + 1e-10)
+    
+    if apply_gaussian:
+        Sxx = apply_gaussian_filter(Sxx, gaussian_sigma)
     
     return Sxx, freqs, times
 
@@ -73,41 +91,14 @@ def create_bar_templates():
     bar2_ = np.zeros((24, 12), dtype='float32')
     
     # Keep the same pattern but scaled up
-    bar_[:, 6:12] = 1.  # Center vertical bar (was 3:6 in original)
-    bar1_[:, 8:16] = 1.  # Center vertical bar (was 4:8 in original)
-    bar2_[:, 4:8] = 1.  # Center vertical bar (was 2:4 in original)
+    bar_[:, 3:6] = 1.  # Center vertical bar (was 3:6 in original)
+    bar1_[:, 4:8] = 1.  # Center vertical bar (was 4:8 in original)
+    bar2_[:, 2:4] = 1.  # Center vertical bar (was 2:4 in original)
     
     return bar_, bar1_, bar2_
 
-def main():
-    # Base directories
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    # Paths
-    template_file = os.path.join(base_dir, 'dolphin_detector/templates/template_definitions.csv')
-    audio_dir = os.path.join(base_dir, 'hakaton/audio_train')
-    
-    # Check if files exist
-    if not os.path.exists(template_file):
-        print(f"Error: Template file not found: {template_file}")
-        return
-    
-    if not os.path.exists(audio_dir):
-        print(f"Error: Audio directory not found: {audio_dir}")
-        return
-    
-    # Load template definitions
-    template_df = pd.read_csv(template_file)
-    
-    # Get the first template definition
-    if len(template_df) == 0:
-        print("Error: No templates found in the template definitions file")
-        return
-    
-    template_def = template_df.iloc[0]
-    print(f"Using template from file: {template_def['fname']}")
-    print(f"Time range: {template_def['time_start']} - {template_def['time_end']} seconds")
-    print(f"Frequency range: {template_def['freq_start']} - {template_def['freq_end']} Hz")
+def visualize_template_matching(template_def, test_file, audio_dir, output_dir, **spectrogram_params):
+    """Create and save visualization for a single template-test file pair"""
     
     # Load the template audio file
     template_audio_file = os.path.join(audio_dir, template_def['fname'])
@@ -120,7 +111,7 @@ def main():
     
     # Generate spectrogram for template
     params = {'NFFT': 2048, 'Fs': sample_rate, 'noverlap': 1536}
-    template_Sxx, template_freqs, template_times = get_spectrogram(template_audio, sample_rate, params)
+    template_Sxx, template_freqs, template_times = get_spectrogram(template_audio, sample_rate, params, **spectrogram_params)
     
     # Find indices for template extraction
     time_start_idx = np.argmin(np.abs(template_times - template_def['time_start']))
@@ -153,21 +144,6 @@ def main():
         'freq_end': template_def['freq_end']
     })
     
-    # Now load a different whistle sample to test template matching
-    # Find a different whistle file
-    whistle_files = template_df[template_df['file_type'] == 'whistles']['fname'].unique()
-    test_file = None
-    for file in whistle_files:
-        if file != template_def['fname']:
-            test_file = file
-            break
-    
-    if test_file is None:
-        print("Error: Could not find a different whistle file for testing")
-        return
-    
-    print(f"Testing template matching on file: {test_file}")
-    
     # Load the test audio file
     test_audio_file = os.path.join(audio_dir, test_file)
     if not os.path.exists(test_audio_file):
@@ -188,8 +164,9 @@ def main():
     maxs_V, xs_V, ys_V = templateMetrics(test_Sxx_V, tmpl)
     maxs_H, xs_H, ys_H = templateMetrics(test_Sxx_H, tmpl)
     
-    print(f"Vertical template matching results: max={maxs_V[0]:.4f}, x={xs_V[0]}, y={ys_V[0]}")
-    print(f"Horizontal template matching results: max={maxs_H[0]:.4f}, x={xs_H[0]}, y={ys_H[0]}")
+    print(f"Template {template_def['fname']} vs {test_file}:")
+    print(f"  Vertical match: max={maxs_V[0]:.4f}, x={xs_V[0]}, y={ys_V[0]}")
+    print(f"  Horizontal match: max={maxs_H[0]:.4f}, x={xs_H[0]}, y={ys_H[0]}")
     
     # Create bar templates for highFreqTemplate
     bar_, bar1_, bar2_ = create_bar_templates()
@@ -199,13 +176,11 @@ def main():
     hf_max1 = highFreqTemplate(test_Sxx, bar1_)[0]
     hf_max2 = highFreqTemplate(test_Sxx, bar2_)[0]
     
-    print(f"High frequency template matching results:")
-    print(f"  bar_: max={hf_max:.4f}")
-    print(f"  bar1_: max={hf_max1:.4f}")
-    print(f"  bar2_: max={hf_max2:.4f}")
+    print(f"  High frequency matches: bar_={hf_max:.4f}, bar1_={hf_max1:.4f}, bar2_={hf_max2:.4f}")
     
     # Create visualization
     fig = plt.figure(figsize=(15, 18))
+    plt.suptitle(f'Template Matching: {template_def["fname"]} vs {test_file}', fontsize=16)
     
     # 1. Original template
     ax1 = fig.add_subplot(4, 2, 1)
@@ -245,14 +220,20 @@ def main():
     # Mark the best match location
     template_height = template_binary.shape[0]
     template_width = template_binary.shape[1]
-    rect_v = plt.Rectangle(
-        (test_times[xs_V[0]], test_freqs[ys_V[0]]/1000),
-        test_times[xs_V[0] + template_width] - test_times[xs_V[0]] if xs_V[0] + template_width < len(test_times) else test_times[-1] - test_times[xs_V[0]],
-        test_freqs[ys_V[0] + template_height]/1000 - test_freqs[ys_V[0]]/1000 if ys_V[0] + template_height < len(test_freqs) else test_freqs[-1]/1000 - test_freqs[ys_V[0]]/1000,
-        fill=False, edgecolor='r', linewidth=2
-    )
-    ax3.add_patch(rect_v)
-    ax3.text(test_times[xs_V[0]], test_freqs[ys_V[0]]/1000, f"Match: {maxs_V[0]:.2f}", color='white', fontsize=10, bbox=dict(facecolor='red', alpha=0.5))
+    
+    # Vertical match rectangle - with bounds checking
+    if xs_V[0] < len(test_times) and ys_V[0] < len(test_freqs):
+        rect_v = plt.Rectangle(
+            (test_times[xs_V[0]], test_freqs[ys_V[0]]/1000),
+            test_times[min(xs_V[0] + template_width, len(test_times)-1)] - test_times[xs_V[0]],
+            test_freqs[min(ys_V[0] + template_height, len(test_freqs)-1)]/1000 - test_freqs[ys_V[0]]/1000,
+            fill=False, edgecolor='r', linewidth=2
+        )
+        ax3.add_patch(rect_v)
+        ax3.text(test_times[xs_V[0]], test_freqs[ys_V[0]]/1000, f"Match: {maxs_V[0]:.2f}", 
+                color='white', fontsize=10, bbox=dict(facecolor='red', alpha=0.5))
+    else:
+        print(f"Warning: Vertical match position ({xs_V[0]}, {ys_V[0]}) out of bounds")
     
     # 4. Test spectrogram with horizontal enhancement
     ax4 = fig.add_subplot(4, 2, 4)
@@ -263,14 +244,19 @@ def main():
     plt.colorbar(im4, ax=ax4, label='Intensity (dB)')
     
     # Mark the best match location
-    rect_h = plt.Rectangle(
-        (test_times[xs_H[0]], test_freqs[ys_H[0]]/1000),
-        test_times[xs_H[0] + template_width] - test_times[xs_H[0]] if xs_H[0] + template_width < len(test_times) else test_times[-1] - test_times[xs_H[0]],
-        test_freqs[ys_H[0] + template_height]/1000 - test_freqs[ys_H[0]]/1000 if ys_H[0] + template_height < len(test_freqs) else test_freqs[-1]/1000 - test_freqs[ys_H[0]]/1000,
-        fill=False, edgecolor='r', linewidth=2
-    )
-    ax4.add_patch(rect_h)
-    ax4.text(test_times[xs_H[0]], test_freqs[ys_H[0]]/1000, f"Match: {maxs_H[0]:.2f}", color='white', fontsize=10, bbox=dict(facecolor='red', alpha=0.5))
+    # Horizontal match rectangle - with bounds checking
+    if xs_H[0] < len(test_times) and ys_H[0] < len(test_freqs):
+        rect_h = plt.Rectangle(
+            (test_times[xs_H[0]], test_freqs[ys_H[0]]/1000),
+            test_times[min(xs_H[0] + template_width, len(test_times)-1)] - test_times[xs_H[0]],
+            test_freqs[min(ys_H[0] + template_height, len(test_freqs)-1)]/1000 - test_freqs[ys_H[0]]/1000,
+            fill=False, edgecolor='r', linewidth=2
+        )
+        ax4.add_patch(rect_h)
+        ax4.text(test_times[xs_H[0]], test_freqs[ys_H[0]]/1000, f"Match: {maxs_H[0]:.2f}", 
+                color='white', fontsize=10, bbox=dict(facecolor='red', alpha=0.5))
+    else:
+        print(f"Warning: Horizontal match position ({xs_H[0]}, {ys_H[0]}) out of bounds")
     
     # 5. High frequency region for bar template matching
     # Get the high frequency region used in highFreqTemplate
@@ -365,15 +351,132 @@ def main():
     fig.text(0.5, 0.01, summary_info, ha='center', fontsize=12, bbox=dict(facecolor='white', alpha=0.8))
     
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
-    plt.suptitle('Template Matching Visualization', fontsize=16)
     
-    # Save figure
-    output_dir = os.path.join(base_dir, 'dolphin_detector/plots')
+    # Save the figure
+    output_filename = f'template_{os.path.splitext(template_def["fname"])[0]}_vs_{os.path.splitext(test_file)[0]}.png'
+    output_path = os.path.join(output_dir, output_filename)
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"  Saved visualization to: {output_path}")
+
+def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Visualize template matching for dolphin whistle detection')
+    parser.add_argument('--template-file', type=str, help='Name of the template audio file (must be in audio_train directory)')
+    parser.add_argument('--test-file', type=str, help='Name of the test audio file to match against (must be in audio_train directory)')
+    parser.add_argument('--list-files', action='store_true', help='List available audio files and exit')
+    parser.add_argument('--all-templates', action='store_true', help='Process all templates')
+    parser.add_argument('--template-type', type=str, choices=['whistles', 'clicks', 'all'], 
+                      default='whistles', help='Type of templates to process (default: whistles)')
+    # Add Gaussian filter controls
+    parser.add_argument('--no-gaussian', action='store_true', help='Disable Gaussian filtering')
+    parser.add_argument('--sigma-freq', type=float, default=1., help='Gaussian sigma for frequency axis (default: 1.0)')
+    parser.add_argument('--sigma-time', type=float, default=1., help='Gaussian sigma for time axis (default: 1.0)')
+    args = parser.parse_args()
+
+    # Base directories
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    template_file = os.path.join(base_dir, 'dolphin_detector/templates/template_definitions.csv')
+    audio_dir = os.path.join(base_dir, 'hakaton/audio_train')
+    output_dir = os.path.join(base_dir, 'dolphin_detector/plots/templates')
     os.makedirs(output_dir, exist_ok=True)
-    plt.savefig(os.path.join(output_dir, 'template_matching_visualization.png'))
+
+    # Check if files exist
+    if not os.path.exists(template_file):
+        print(f"Error: Template file not found: {template_file}")
+        return
     
-    print(f"Visualization saved to {os.path.join(output_dir, 'template_matching_visualization.png')}")
-    plt.show()
+    if not os.path.exists(audio_dir):
+        print(f"Error: Audio directory not found: {audio_dir}")
+        return
+
+    # Load template definitions
+    template_df = pd.read_csv(template_file)
+    
+    # Print template type statistics
+    template_types = template_df['file_type'].value_counts()
+    print("\nTemplate statistics:")
+    for type_name, count in template_types.items():
+        print(f"  {type_name}: {count} templates")
+    print(f"  Total: {len(template_df)} templates")
+    
+    # Print Gaussian filter settings
+    print("\nGaussian filter settings:")
+    if args.no_gaussian:
+        print("  Gaussian filtering: Disabled")
+    else:
+        print(f"  Gaussian filtering: Enabled")
+        print(f"  Sigma (freq, time): ({args.sigma_freq}, {args.sigma_time})")
+    
+    # If --list-files flag is used, show available files and exit
+    if args.list_files:
+        print("\nAvailable audio files by type:")
+        for file_type in sorted(template_df['file_type'].unique()):
+            print(f"\n{file_type.upper()}:")
+            type_files = template_df[template_df['file_type'] == file_type]
+            for idx, row in type_files.iterrows():
+                print(f"{idx + 1}. {row['fname']}")
+        return
+
+    # Create a dictionary of spectrogram parameters
+    spectrogram_params = {
+        'apply_gaussian': not args.no_gaussian,
+        'gaussian_sigma': (args.sigma_freq, args.sigma_time)
+    }
+
+    if args.all_templates:
+        # Process templates based on type
+        if args.template_type == 'all':
+            templates_to_process = template_df
+        else:
+            templates_to_process = template_df[template_df['file_type'] == args.template_type]
+        
+        total_templates = len(templates_to_process)
+        print(f"\nProcessing {total_templates} templates...")
+        
+        for idx, template_def in templates_to_process.iterrows():
+            print(f"\nTemplate {idx + 1}/{total_templates}")
+            
+            # Use the same filename as both template and test file
+            test_file = template_def['fname']
+            visualize_template_matching(template_def, test_file, audio_dir, output_dir, **spectrogram_params)
+            
+    else:
+        # Process single template
+        if args.template_file:
+            template_def = template_df[template_df['fname'] == args.template_file]
+            if len(template_def) == 0:
+                print(f"Error: Template file '{args.template_file}' not found in definitions")
+                print("\nAvailable template files:")
+                for idx, row in template_df.iterrows():
+                    print(f"{idx + 1}. {row['fname']} ({row['file_type']})")
+                return
+            template_def = template_def.iloc[0]
+        else:
+            template_def = template_df.iloc[0]
+            print("No template file specified, using default:", template_def['fname'])
+
+        # For test file, if not specified, use a different file of the same type
+        if args.test_file:
+            if args.test_file not in template_df['fname'].values:
+                print(f"Error: Test file '{args.test_file}' not found in available files")
+                print("\nAvailable test files:")
+                for idx, row in template_df.iterrows():
+                    print(f"{idx + 1}. {row['fname']} ({row['file_type']})")
+                return
+            test_file = args.test_file
+        else:
+            same_type_files = template_df[
+                (template_df['file_type'] == template_def['file_type']) & 
+                (template_df['fname'] != template_def['fname'])
+            ]['fname']
+            test_file = next(iter(same_type_files), None)
+            if test_file is None:
+                print(f"Error: Could not find a different {template_def['file_type']} file for testing")
+                return
+            print("No test file specified, using:", test_file)
+
+        visualize_template_matching(template_def, test_file, audio_dir, output_dir, **spectrogram_params)
 
 if __name__ == "__main__":
     main() 

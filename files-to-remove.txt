@@ -1,3 +1,0 @@
-output/dolphin_train_metrics.csv
-output/dolphin_train_metrics_250.csv
-output/dolphin_train_metrics_320.csv 

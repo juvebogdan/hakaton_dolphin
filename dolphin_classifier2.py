@@ -132,6 +132,27 @@ class DolphinClassifier:
             'hfMax2',    # Bar1 template matching score
             'hfMax3'     # Bar2 template matching score
         ])
+
+        # Add new audio feature names
+        self.feature_names.extend([
+            'zero_crossing_rate',
+            'spectral_centroid', 'spectral_centroid_std', 'spectral_centroid_skew',
+            'spectral_bandwidth', 'spectral_bandwidth_std', 'spectral_bandwidth_skew',
+            'spectral_rolloff', 'spectral_rolloff_std', 'spectral_rolloff_skew',
+            'spectral_contrast', 'spectral_contrast_std', 'spectral_contrast_skew',
+            'chroma_mean', 'chroma_std',
+            'energy'
+        ])
+
+        # Add MFCC feature names
+        for i in range(1, 21):  # 20 MFCCs
+            self.feature_names.extend([
+                f'mfcc_{i}_mean',
+                f'mfcc_{i}_std',
+                f'mfcc_{i}_skew',
+                f'mfcc_{i}_max',
+                f'mfcc_{i}_min'
+            ])
         
         # Print dataset statistics
         self.n_samples, self.n_features = self.features.shape
@@ -163,6 +184,13 @@ class DolphinClassifier:
         print("  - hfMax: Bar template (18px wide)")
         print("  - hfMax2: Bar1 template (24px wide)")
         print("  - hfMax3: Bar2 template (12px wide)")
+
+        print("\n5. Audio Signal Features:")
+        print("  - Zero crossing rate")
+        print("  - Spectral features (centroid, bandwidth, rolloff, contrast)")
+        print("  - Chroma features")
+        print("  - Energy")
+        print("  - 20 MFCCs with statistics (mean, std, skew, max, min)")
         
         print(f"\nPositive samples (whistles): {n_positive}")
         print(f"Negative samples (noise): {n_negative}")
