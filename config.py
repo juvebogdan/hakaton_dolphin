@@ -6,7 +6,8 @@ Configuration parameters for the dolphin detector.
 
 # Audio Processing Parameters
 SAMPLE_RATE = 96000  # Hz
-MAX_FREQUENCY = 150  # Maximum frequency slice for time stats
+MAX_FREQUENCY = 250  # Maximum frequency slice for time stats
+MAX_TIME = 150
 
 # Filtering Parameters
 FILTER_LOW = 5000   # Low cutoff frequency (Hz)
@@ -40,7 +41,7 @@ SMALL_TEST_CV_FOLDS = 3
 
 # Data Split Parameters
 TEST_SIZE = 0.2
-RANDOM_STATE = 42
+RANDOM_STATE = 21
 
 # Paths
 OUTPUT_DIR = 'output'

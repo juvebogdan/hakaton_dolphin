@@ -1,26 +1,24 @@
-"""
-generate_training_metrics.py
-
-This file generates the training metrics for dolphin whistle detection
-based on the original whale detection approach but adapted for higher frequency dolphin sounds.
-"""
-
 import numpy as np
 import os
+import sys
+from pathlib import Path
 import pandas as pd
 import wave
 from scipy import signal
 import matplotlib.pyplot as plt
 import argparse
 from multiprocessing import Pool, cpu_count
-from functools import partial
 from tqdm import tqdm
 import librosa
 from scipy.stats import skew
-from dolphin_detector.metricsDolphin import computeMetrics, highFreqTemplate, slidingWindowV
-from dolphin_detector.fileio import AudioData  # Import AudioData from fileio
-from dolphin_detector.config import MAX_FREQUENCY  # Import from config module
+from metricsDolphin import computeMetrics, highFreqTemplate, slidingWindowV, buildHeader
+from fileio import AudioData  # Import AudioData from fileio
+from config import MAX_FREQUENCY, MAX_TIME  # Import from config module
 import warnings
+
+parent_dir = str(Path(__file__).resolve().parent.parent)
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
 
 # Suppress librosa warnings
 warnings.filterwarnings('ignore', module='librosa')
@@ -111,15 +109,13 @@ class TemplateManager:
 
 def create_bar_templates():
     """Create the vertical bar templates used in highFreqTemplate"""
-    # Scaled up for dolphin audio (2x size of original whale templates)
     bar_ = np.zeros((24, 18), dtype='float32')
     bar1_ = np.zeros((24, 24), dtype='float32')
     bar2_ = np.zeros((24, 12), dtype='float32')
     
-    # Keep the same pattern but scaled up
-    bar_[:, 6:12] = 1.  # Center vertical bar (was 3:6 in original)
-    bar1_[:, 8:16] = 1.  # Center vertical bar (was 4:8 in original)
-    bar2_[:, 4:8] = 1.  # Center vertical bar (was 2:4 in original)
+    bar_[:, 6:12] = 1.
+    bar1_[:, 8:16] = 1.
+    bar2_[:, 4:8] = 1.
     
     return bar_, bar1_, bar2_
 
@@ -149,7 +145,7 @@ def process_file(args):
         
         # Check if audio is empty or silent
         if len(audio_data_raw) == 0 or np.all(np.abs(audio_data_raw) < 1e-6):
-            # For silent/empty audio, set reasonable default values
+            
             features['zero_crossing_rate'] = 0.0
             features['spectral_centroid'] = 0.0
             features['spectral_centroid_std'] = 0.0
@@ -167,7 +163,7 @@ def process_file(args):
             features['chroma_std'] = 0.0
             features['energy'] = 0.0
             
-            # Set MFCC features to 0
+           
             for i in range(1, 21):
                 features[f'mfcc_{i}_mean'] = 0.0
                 features[f'mfcc_{i}_std'] = 0.0
@@ -182,7 +178,7 @@ def process_file(args):
             # Spectral features
             stft = np.abs(librosa.stft(audio_data_raw))
             
-            if np.any(stft):  # Check if STFT has any non-zero values
+            if np.any(stft):  
                 # Spectral centroid
                 centroid = librosa.feature.spectral_centroid(S=stft, sr=sr)[0]
                 features['spectral_centroid'] = np.mean(centroid) if len(centroid) > 0 else 0.0
@@ -223,7 +219,7 @@ def process_file(args):
                     warnings.simplefilter("ignore")
                     try:
                         chroma = librosa.feature.chroma_stft(S=stft, sr=sr)
-                        if np.any(chroma):  # Check if chroma features contain any non-zero values
+                        if np.any(chroma):
                             features['chroma_mean'] = np.mean(chroma)
                             features['chroma_std'] = np.std(chroma)
                         else:
@@ -237,7 +233,7 @@ def process_file(args):
             features['energy'] = np.sum(audio_data_raw**2) / len(audio_data_raw)
         
         # Compute original metrics
-        out = computeMetrics(P, templates, bins, MAX_FREQUENCY)
+        out = computeMetrics(P, templates, bins, MAX_FREQUENCY, MAX_TIME)
         
         # Add high frequency template metrics
         bar_, bar1_, bar2_ = bar_templates
@@ -262,12 +258,15 @@ def parse_args():
     parser.add_argument('--test-size', type=int, default=5, help='Number of files to process in test mode (default: 5)')
     parser.add_argument('--num-processes', type=int, default=None, 
                        help='Number of processes to use (default: number of CPU cores)')
+    parser.add_argument('--audio-dir', type=str, default=None,
+                       help='Path to the directory containing audio files')
+    parser.add_argument('--csv-path', type=str, default=None,
+                       help='Path to the CSV file with labels')
+    parser.add_argument('--output-file', type=str, default='dolphin_train_metrics.csv',
+                       help='Name of the output CSV file (default: dolphin_train_metrics.csv)')
     return parser.parse_args()
 
 def main():
-    """
-    Main function to process audio files and generate training metrics.
-    """
     # Parse command line arguments
     args = parse_args()
 
@@ -277,10 +276,14 @@ def main():
     # Create output directory if it doesn't exist
     os.makedirs(os.path.join(os.path.dirname(__file__), 'output'), exist_ok=True)
     
-    # Parameters
-    data_dir = os.path.join(base_dir, 'hakaton')  # Data directory
-    audio_dir = os.path.join(data_dir, 'audio_train')  # Audio files directory
-    csv_path = os.path.join(data_dir, 'train.csv')  # CSV file with labels
+    # Set up paths using command line arguments or defaults
+    audio_dir = args.audio_dir or os.path.join(base_dir, 'hakaton', 'audio_train')
+    csv_path = args.csv_path or os.path.join(base_dir, 'hakaton', 'train.csv')
+    
+    # Print the paths being used
+    print("\nUsing the following paths:")
+    print(f"Audio directory: {audio_dir}")
+    print(f"CSV path: {csv_path}")
     
     # Load audio data
     print("Loading audio data...")
@@ -300,8 +303,7 @@ def main():
     bar_templates = create_bar_templates()
     
     # Create header
-    from dolphin_detector.metricsDolphin import buildHeader
-    out_hdr = buildHeader(tmpl, MAX_FREQUENCY)
+    out_hdr = buildHeader(tmpl, MAX_FREQUENCY, MAX_TIME)
     
     # Add new feature headers
     additional_headers = [
@@ -376,7 +378,7 @@ def main():
     
     # Save metrics to CSV
     print("\nSaving metrics to CSV...")
-    output_file = os.path.join(os.path.dirname(__file__), 'output', 'dolphin_train_metrics.csv')
+    output_file = os.path.join(os.path.dirname(__file__), 'output', args.output_file)
     with open(output_file, 'w') as file:
         file.write("Truth,Index," + out_hdr + "\n")
         np.savetxt(file, h_list, delimiter=',')

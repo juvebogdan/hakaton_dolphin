@@ -1,23 +1,19 @@
 import numpy as np
-from scipy import signal
 from scipy.stats import skew
-import librosa
 import cv2
-from scipy.signal import convolve2d
 import sys
 from pathlib import Path
 
-# Add the parent directory to sys.path to allow both package and script usage
 parent_dir = str(Path(__file__).resolve().parent.parent)
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
 try:
-    from dolphin_detector.config import MAX_FREQUENCY
+    from dolphin_detector.config import MAX_FREQUENCY, MAX_TIME
 except ImportError:
-    from config import MAX_FREQUENCY
+    from config import MAX_FREQUENCY, MAX_TIME
 
-def buildHeader(tmpl, maxT=MAX_FREQUENCY):
+def buildHeader(tmpl, maxT=MAX_FREQUENCY, maxTime=MAX_TIME):
     """ Build a header
 
         Build the header for the metrics
@@ -38,13 +34,13 @@ def buildHeader(tmpl, maxT=MAX_FREQUENCY):
             hdr_.append(p_+'H_'+str(tmpl.info[i]['file']))
 
     # Add time metrics
-    for i in range(maxT):
+    for i in range(maxTime):
         hdr_ += ['centTime_%04d'%i]
-    for i in range(maxT):
+    for i in range(maxTime):
         hdr_ += ['bwTime_%04d'%i]
-    for i in range(maxT):
+    for i in range(maxTime):
         hdr_ += ['skewTime_%04d'%i]
-    for i in range(maxT):
+    for i in range(maxTime):
         hdr_ += ['tvTime_%04d'%i]
 
     # Add high frequency metrics
@@ -52,7 +48,7 @@ def buildHeader(tmpl, maxT=MAX_FREQUENCY):
     hdr_ += ['hfMax','hfMax2','hfMax3']
     return ','.join(hdr_)
 
-def computeMetrics(P, tmpl, bins, maxT):
+def computeMetrics(P, tmpl, bins, maxF, maxTime):
     """ Compute a bunch of metrics
 
         Perform template matching and time stats
@@ -67,11 +63,11 @@ def computeMetrics(P, tmpl, bins, maxT):
             List of metrics
     """
     # Use full image dimensions for sliding window
-    Q = slidingWindowV(P, inner=3, outer=64, maxM=MAX_FREQUENCY, norm=True)
-    W = slidingWindowH(P, inner=3, outer=32, maxM=MAX_FREQUENCY, norm=True)
+    Q = slidingWindowV(P, inner=3, outer=64, maxM=maxF, norm=True)
+    W = slidingWindowH(P, inner=3, outer=32, maxM=maxF, norm=True)
     out = templateMetrics(Q, tmpl)    
     out += templateMetrics(W, tmpl)    
-    out += timeMetrics(P, bins, maxM=maxT)
+    out += timeMetrics(P, bins, maxM=maxTime)
     out += highFreqMetrics(P, bins)
     return out
 
@@ -160,7 +156,7 @@ def slidingWindowH(P, inner=3, outer=32, maxM=MAX_FREQUENCY, norm=True):
     wOuter = np.ones(outer)
     for i in range(min(maxM, m)):
         Q[i,:] = Q[i,:] - (np.convolve(Q[i,:],wOuter,'same') - np.convolve(Q[i,:],wInner,'same'))/(outer - inner)
-    # Don't truncate the image - use the full height
+
     return Q
 
 def timeMetrics(P, b, maxM=50):
@@ -212,11 +208,10 @@ def highFreqMetrics(P, bins):
         
         Calculate statistics of features at higher frequencies
         This is designed to capture false alarms that occur
-        at frequencies higher than typical whale calls.
+        at frequencies higher than typical dolphin clicks.
 
         Also sum accross frequencies to get an average temporal
-        profile. Then return statistics of this profile. The
-        false alarms have a sharper peak.
+        profile. Then return statistics of this profile
 
         Args:
             P: 2-d numpy array image
@@ -228,7 +223,7 @@ def highFreqMetrics(P, bins):
             the moments of the collapsed slices
 
     """
-    Q = slidingWindowH(P, inner=7, maxM=MAX_FREQUENCY, norm=True)[150:,:]    
+    Q = slidingWindowH(P, inner=7, maxM=MAX_FREQUENCY, norm=True)[200:,:]    
     m, n = Q.shape
     cf_ = np.empty(m)
     bw_ = np.empty(m)
@@ -241,15 +236,15 @@ def highFreqMetrics(P, bins):
         min_, max_ = mQ.min(), mQ.max()
         # Add epsilon to denominator to prevent division by zero
         mQ = (mQ - min_)/(max_ - min_ + epsilon)
-        cf_[i] = np.sum(mQ*bins)/np.sum(mQ + epsilon)  # Add epsilon to denominator
-        bw_[i] = np.sqrt(np.sum(mQ*(bins-cf_[i])*(bins-cf_[i]))/(np.sum(mQ) + epsilon))  # Add epsilon to denominator
+        cf_[i] = np.sum(mQ*bins)/np.sum(mQ + epsilon) 
+        bw_[i] = np.sqrt(np.sum(mQ*(bins-cf_[i])*(bins-cf_[i]))/(np.sum(mQ) + epsilon)) 
 
     mQ = np.sum(Q[50:,:], 0)  # Suggested adjustment
     min_, max_ = mQ.min(), mQ.max()
     # Add epsilon to denominator to prevent division by zero
     mQ = (mQ - min_)/(max_ - min_ + epsilon)
-    cfM_ = np.sum(mQ*bins)/(np.sum(mQ) + epsilon)  # Add epsilon to denominator
-    bwM_ = np.sqrt(np.sum(mQ*(bins - cfM_)*(bins - cfM_))/(np.sum(mQ) + epsilon))  # Add epsilon to denominator
+    cfM_ = np.sum(mQ*bins)/(np.sum(mQ) + epsilon) 
+    bwM_ = np.sqrt(np.sum(mQ*(bins - cfM_)*(bins - cfM_))/(np.sum(mQ) + epsilon)) 
 
     return [np.std(cf_), np.mean(bw_), cfM_, bwM_]
 
