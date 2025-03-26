@@ -14,10 +14,8 @@ parent_dir = str(Path(__file__).resolve().parent.parent)
 if parent_dir not in sys.path:
     sys.path.append(parent_dir)
 
-try:
-    from dolphin_detector import config
-except ImportError:
-    import config
+
+import config
 
 class DolphinEvaluator:
     def __init__(self, metrics_file, mapping_file, model_dir=None, output_file=None, truth_file=None):
