@@ -145,13 +145,11 @@ class DolphinEvaluator:
         
         self.filenames = np.array(self.filenames)
         
-        # Check if we also have truth values (for evaluation)
-        if data.columns[0].lower() in ['truth', 'label', 'class']:
-            self.truth = np.array(data.iloc[:, 0])
-            n_positive = np.sum(self.truth == 1)
-            n_negative = np.sum(self.truth == 0)
-            print(f"Truth data available in metrics file: {n_positive} whistles, {n_negative} noise samples")
-            self.truth_source = "metrics_file"
+        # MODIFIED: Only check for truth in metrics file if truth_file was not provided
+        # This ensures we only use explicitly provided truth data
+        if self.truth_file is None and data.columns[0].lower() in ['truth', 'label', 'class']:
+            print("Note: First column in metrics file appears to contain labels, but will be ignored")
+            print("      Use --truth-file parameter if you want to evaluate against truth labels")
             
         # Get number of templates from the first prefix group (max_)
         n_templates = sum(1 for col in data.columns if col.startswith('max_'))
@@ -286,21 +284,15 @@ class DolphinEvaluator:
         print(f"Predictions: {n_whistles} whistles ({n_whistles/self.n_samples:.1%}), "
               f"{n_noise} noise ({n_noise/self.n_samples:.1%})")
         
-        # Calculate accuracy if truth values are available
-        if hasattr(self, 'truth') and self.truth is not None:
+        # MODIFIED: Only calculate metrics if truth file was explicitly provided
+        if self.truth_file is not None and hasattr(self, 'truth') and self.truth is not None:
             # Filter out None values in truth data if any
-            if self.truth_source == "truth_file":
-                valid_indices = [i for i, t in enumerate(self.truth) if t is not None]
-                if len(valid_indices) < len(self.truth):
-                    print(f"Note: {len(self.truth) - len(valid_indices)} samples have no truth label and will be excluded from evaluation")
-                
-                truth_array = np.array([self.truth[i] for i in valid_indices])
-                pred_array = np.array([self.predictions[i] for i in valid_indices])
-            else:
-                # All truth values from metrics file should be valid
-                truth_array = self.truth
-                pred_array = self.predictions
-                valid_indices = list(range(len(self.truth)))
+            valid_indices = [i for i, t in enumerate(self.truth) if t is not None]
+            if len(valid_indices) < len(self.truth):
+                print(f"Note: {len(self.truth) - len(valid_indices)} samples have no truth label and will be excluded from evaluation")
+            
+            truth_array = np.array([self.truth[i] for i in valid_indices])
+            pred_array = np.array([self.predictions[i] for i in valid_indices])
             
             # Calculate metrics
             accuracy = accuracy_score(truth_array, pred_array)
@@ -327,16 +319,14 @@ class DolphinEvaluator:
             print(classification_report(truth_array, pred_array, 
                                        target_names=['Noise', 'Whistles']))
             
-            # If using truth file, add truth labels to results
-            if self.truth_source == "truth_file":
-                # Initialize truth column with NaN
-                self.results['truth_label'] = 'unknown'
-                
-                # Update truth labels for valid indices
-                for i, idx in enumerate(valid_indices):
-                    truth_val = truth_array[i]
-                    truth_label = "noise" if truth_val == 0 else "whistles"
-                    self.results.loc[idx, 'truth_label'] = truth_label
+            # Add truth labels to results
+            self.results['truth_label'] = 'unknown'
+            
+            # Update truth labels for valid indices
+            for i, idx in enumerate(valid_indices):
+                truth_val = truth_array[i]
+                truth_label = "noise" if truth_val == 0 else "whistles"
+                self.results.loc[idx, 'truth_label'] = truth_label
         
         return self.results
     
@@ -358,7 +348,7 @@ class DolphinEvaluator:
             columns.append('probability')
         if include_index:
             columns.append('index')
-        if include_truth and hasattr(self, 'truth') and 'truth_label' in self.results.columns:
+        if include_truth and self.truth_file is not None and 'truth_label' in self.results.columns:
             columns.append('truth_label')
             
         output_df = self.results[columns]
