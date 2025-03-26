@@ -21,11 +21,11 @@ from scipy.stats import skew
 import warnings
 
 
-from dolphin_detector.metricsDolphin import (
+from metricsDolphin import (
     computeMetrics, highFreqTemplate, buildHeader
 )
-from dolphin_detector.config import MAX_FREQUENCY, MAX_TIME
-from dolphin_detector.generate_training_metrics2 import (
+from config import MAX_FREQUENCY, MAX_TIME
+from generate_training_metrics2 import (
     TemplateManager, create_bar_templates
 )
 
