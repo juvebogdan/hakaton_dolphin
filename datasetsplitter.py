@@ -12,7 +12,7 @@ from pathlib import Path
 SAMPLE_RATE = 96000
 
 # Define paths
-base_dir = Path('../hakaton')
+base_dir = Path('./hakaton')
 train_source_dir = base_dir
 train_dest_dir = base_dir / 'audio_train'
 test_dest_dir = base_dir / 'audio_test'

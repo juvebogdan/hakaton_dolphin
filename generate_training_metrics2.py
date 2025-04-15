@@ -262,6 +262,8 @@ def parse_args():
                        help='Path to the directory containing audio files')
     parser.add_argument('--csv-path', type=str, default=None,
                        help='Path to the CSV file with labels')
+    parser.add_argument('--template-audio-dir', type=str, default=None,
+                       help='Path to the directory containing template audio files')
     parser.add_argument('--output-file', type=str, default='dolphin_train_metrics.csv',
                        help='Name of the output CSV file (default: dolphin_train_metrics.csv)')
     return parser.parse_args()
@@ -270,20 +272,22 @@ def main():
     # Parse command line arguments
     args = parse_args()
 
-    # Base directories
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Base directories - use current directory instead of parent
+    base_dir = os.path.dirname(os.path.abspath(__file__))
     
     # Create output directory if it doesn't exist
-    os.makedirs(os.path.join(os.path.dirname(__file__), 'output'), exist_ok=True)
+    os.makedirs(os.path.join(base_dir, 'output'), exist_ok=True)
     
     # Set up paths using command line arguments or defaults
     audio_dir = args.audio_dir or os.path.join(base_dir, 'hakaton', 'audio_train')
     csv_path = args.csv_path or os.path.join(base_dir, 'hakaton', 'train.csv')
+    template_audio_dir = args.template_audio_dir or os.path.join(base_dir, 'templates', 'audio')
     
     # Print the paths being used
     print("\nUsing the following paths:")
     print(f"Audio directory: {audio_dir}")
     print(f"CSV path: {csv_path}")
+    print(f"Template audio directory: {template_audio_dir}")
     
     # Load audio data
     print("Loading audio data...")
@@ -291,8 +295,9 @@ def main():
     
     # Load templates
     print("Loading templates...")
-    template_file = os.path.join(base_dir, 'dolphin_detector/templates/template_definitions.csv')
-    tmpl = TemplateManager(template_file, audio_dir)
+    # Update template file path to use current directory
+    template_file = os.path.join(base_dir, 'templates', 'template_definitions.csv')
+    tmpl = TemplateManager(template_file, template_audio_dir)
     
     # Check if we have templates
     if tmpl.size == 0:
@@ -378,7 +383,7 @@ def main():
     
     # Save metrics to CSV
     print("\nSaving metrics to CSV...")
-    output_file = os.path.join(os.path.dirname(__file__), 'output', args.output_file)
+    output_file = os.path.join(base_dir, 'output', args.output_file)
     with open(output_file, 'w') as file:
         file.write("Truth,Index," + out_hdr + "\n")
         np.savetxt(file, h_list, delimiter=',')
@@ -388,9 +393,9 @@ def main():
     
     # Visualize feature distributions
     print("\nGenerating feature distribution visualization...")
-    visualize_feature_distributions(h_list, tmpl)
+    visualize_feature_distributions(h_list, tmpl, base_dir=base_dir)
 
-def visualize_feature_distributions(h_list, tmpl, test_mode=False):
+def visualize_feature_distributions(h_list, tmpl, test_mode=False, base_dir=None):
     """
     Create a visualization of the feature distributions.
     
@@ -398,6 +403,7 @@ def visualize_feature_distributions(h_list, tmpl, test_mode=False):
         h_list: Array of metrics with class labels
         tmpl: Template manager object
         test_mode: Whether running in test mode
+        base_dir: Base directory for saving the visualization
     """
     # Optional: Create a visualization of the feature distribution
     plt.figure(figsize=(12, 6))
@@ -456,7 +462,7 @@ def visualize_feature_distributions(h_list, tmpl, test_mode=False):
     plt.tight_layout()
     
     # Save the visualization
-    vis_file = os.path.join(os.path.dirname(__file__), 'output', 'feature_distribution.png')
+    vis_file = os.path.join(base_dir, 'output', 'feature_distribution.png')
     plt.savefig(vis_file)
     print(f"Feature distribution visualization saved to {vis_file}")
 
